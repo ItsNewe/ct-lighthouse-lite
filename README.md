@@ -1,4 +1,5 @@
 # CT Lighthouse Lite - Trading Performance Dashboard
+[![Docker](https://github.com/ItsNewe/ct-lighthouse-lite/actions/workflows/docker-image.yml/badge.svg)](https://github.com/ItsNewe/ct-lighthouse-lite/actions/workflows/docker-image.yml)
 
 CT Lighthouse Lite is a Streamlit-based dashboard for detailed analysis of cTrader algorithmic trading backtest results. This tool helps traders visualize and understand their trading performance through comprehensive metrics.
 
