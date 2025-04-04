@@ -5,18 +5,22 @@ import os
 import plotly.express as px
 import plotly.graph_objects as go
 
-st.set_page_config(layout="wide")  # Use wide layout for dashboard
+logo_path: str = "static/favicon.png"
+
+st.set_page_config(page_title="Lighthouse",
+    page_icon="static/favicon.png" if os.path.exists(logo_path) else "🛰️",
+    layout="wide")  # Use wide layout for dashboard
 # Create header with logo and title
 header_col1, header_col2 = st.columns([0.1, 0.9])
 with header_col1:
     # Check if logo exists before displaying
-    logo_path = "static/favicon.png"
     if os.path.exists(logo_path):
         st.image(logo_path)
 with header_col2:
     st.title("Lighthouse - Trading Performance Dashboard")
 
-db = st.connection('mysql', type="sql")
+#! Unused for now
+#db = st.connection('mysql', type="sql")
 
 # Add parameter inputs in the sidebar
 st.sidebar.header("Account Parameters")
