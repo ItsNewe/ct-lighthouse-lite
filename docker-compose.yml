@@ -12,6 +12,7 @@ services:
       - lighthouse-static:/app/static
 volumes:
   lighthouse-static:
+      external: true
 
 #  db:
 #    image: mysql:8.0
