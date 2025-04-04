@@ -1,17 +1,25 @@
 import streamlit as st
 import pandas as pd
 import numpy as np
+import os
 import plotly.express as px
 import plotly.graph_objects as go
 
 st.set_page_config(layout="wide")  # Use wide layout for dashboard
+# Create header with logo and title
+header_col1, header_col2 = st.columns([0.1, 0.9])
+with header_col1:
+    # Check if logo exists before displaying
+    logo_path = "static/favicon.png"
+    if os.path.exists(logo_path):
+        st.image(logo_path)
+with header_col2:
+    st.title("Lighthouse - Trading Performance Dashboard")
 
 db = st.connection('mysql', type="sql")
 
-st.title("Trading Performance Dashboard")
-
 # Add parameter inputs in the sidebar
-st.sidebar.header("Trading Parameters")
+st.sidebar.header("Account Parameters")
 initial_account_size = st.sidebar.number_input("Initial Account Size (€)", min_value=1000, value=40000, step=1000)
 max_daily_loss = st.sidebar.number_input("Max Daily Loss (€)", min_value=100, value=2000, step=100)
 max_total_loss = st.sidebar.number_input("Max Total Loss (€)", min_value=1000, value=4000, step=500)
