@@ -5,6 +5,8 @@ import os
 import plotly.express as px
 import plotly.graph_objects as go
 
+SHORT_COLOR = "#00CC96"
+LONG_COLOR = "#EF553B"
 logo_path: str = "static/favicon.png"
 
 st.set_page_config(page_title="Lighthouse",
@@ -17,19 +19,10 @@ with header_col1:
     if os.path.exists(logo_path):
         st.image(logo_path)
 with header_col2:
-    st.title("Lighthouse - Trading Performance Dashboard")
+    st.title("Lighthouse - cTrader History Analyzer")
 
-#! Unused for now
-#db = st.connection('mysql', type="sql")
 
-# Add parameter inputs in the sidebar
-st.sidebar.header("Account Parameters")
-initial_account_size = st.sidebar.number_input("Initial Account Size (€)", min_value=1000, value=40000, step=1000)
-max_daily_loss = st.sidebar.number_input("Max Daily Loss (€)", min_value=100, value=2000, step=100)
-max_total_loss = st.sidebar.number_input("Max Total Loss (€)", min_value=1000, value=4000, step=500)
-
-fileUpload = st.file_uploader("Upload a trading data CSV file", type=["csv"])
-if fileUpload is not None:
+def processCsv(file):
     df = pd.read_csv(fileUpload)
     processed_df = df.copy()
 
@@ -83,41 +76,75 @@ if fileUpload is not None:
     processed_df['position_id'] = pd.to_numeric(processed_df['position_id'], errors='coerce').fillna(0).astype(int)
     processed_df['serial_number'] = pd.to_numeric(processed_df['serial_number'], errors='coerce').astype(int)
     
+    # Calculate position duration
+    position_durations = processed_df.groupby('position_id').agg({
+        'event_time': ['min', 'max']
+    })['event_time']
+    position_durations['duration'] = position_durations['max'] - position_durations['min']
+
+    # Merge duration back to the main dataframe
+    processed_df = processed_df.merge(
+        position_durations['duration'].reset_index(),
+        on='position_id',
+        how='left'
+    )
     # Filter for completed trades (Take Profit/Stop Loss/Position closed events)
-    completed_trades = processed_df[processed_df['event_type'].isin(['Take Profit Hit', 'Stop Loss Hit', 'Position closed'])]
-    
-    # Calculate additional metrics
-    
+    return processed_df, processed_df[processed_df['event_type'].isin(['Take Profit Hit', 'Stop Loss Hit', 'Position closed'])]
+#! Unused for now
+#db = st.connection('mysql', type="sql")
+
+# Add parameter inputs in the sidebar
+st.sidebar.header("Account Parameters")
+initial_account_size = st.sidebar.number_input("Initial Account Size (€)", min_value=1000, value=40000, step=1000)
+max_daily_loss = st.sidebar.number_input("Max Daily Loss (€)", min_value=100, value=2000, step=100)
+max_total_loss = st.sidebar.number_input("Max Total Loss (€)", min_value=1000, value=4000, step=500)
+
+processed_df, completed_trades = pd.DataFrame(), pd.DataFrame()
+fileUpload = st.file_uploader("Upload a trading data CSV file", type=["csv"])
+if fileUpload is not None:
+    processed_df, completed_trades = processCsv(fileUpload)
+    # Add button to load sample data
+load_sample = st.button("Load Sample Data")
+if load_sample:
+    # Use sample data path relative to main.py
+    sample_path = os.path.join(os.path.dirname(__file__), "static", "sample.csv")
+    if os.path.exists(sample_path):
+        fileUpload = open(sample_path, "rb")
+        processed_df, completed_trades = processCsv(fileUpload)
+    else:
+        st.error("Sample data file not found")
+# Calculate additional metrics
+if not completed_trades.empty:
     # 1. Profit Factor = Gross Profits / Gross Losses
     winning_trades = completed_trades[completed_trades['gross_profit'] > 0]
     losing_trades = completed_trades[completed_trades['gross_profit'] < 0]
-    
+
     gross_profit = winning_trades['gross_profit'].sum() if len(winning_trades) > 0 else 0
     gross_loss = abs(losing_trades['gross_profit'].sum()) if len(losing_trades) > 0 else 1  # Avoid div by 0
-    
+
     profit_factor = gross_profit / gross_loss if gross_loss != 0 else float('inf')
-    
+
     # 2. Calculate Sharpe Ratio (daily)
     # Group trades by date to get daily returns
     daily_returns = completed_trades.groupby('date')['gross_profit'].sum()
-    
+
     # Calculate Sharpe ratio (annualized, assuming 252 trading days)
     risk_free_rate = 0  # Simplified, can be adjusted
     if len(daily_returns) > 1:
         sharpe_ratio = np.sqrt(252) * (daily_returns.mean() - risk_free_rate) / daily_returns.std() if daily_returns.std() != 0 else 0
     else:
         sharpe_ratio = 0
-    
+
     # 3. ROI calculation
     # Use actual initial balance or the provided parameter
     initial_balance = processed_df['balance'].iloc[-1] if initial_account_size == 0 else initial_account_size
     current_balance = completed_trades['balance'].iloc[-1] if len(completed_trades) > 0 else initial_balance
     roi = ((current_balance - initial_balance) / initial_balance) * 100
-    
+
     # 4. Maximum Drawdown calculation
     time_data = processed_df.sort_values('event_time')
     balance_equity_df = time_data[['event_time', 'balance', 'equity']].dropna()
-    
+
     # Calculate running maximum and drawdown
     if len(balance_equity_df) > 0:
         balance_equity_df['running_max'] = balance_equity_df['equity'].cummax()
@@ -127,13 +154,13 @@ if fileUpload is not None:
     else:
         max_drawdown = 0
         max_drawdown_date = None
-    
+
     # Create tabs for organization
-    tab1, tab2, tab3, tab4 = st.tabs(["Overview", "Time Analysis", "Position Analysis", "Raw Data"])
-    
+    tab1, tab2, tab3, tab4, tab5 = st.tabs(["Overview", "Time Analysis", "Position Analysis", "Sequence Analysis", "Raw Data"])
+
     with tab1:
         st.header("Trading Overview")
-        
+        st.subheader("Key Metrics")
         # First row: Core metrics
         col1, col2, col3, col4 = st.columns(4)
         with col1:
@@ -195,6 +222,8 @@ if fileUpload is not None:
             )
             
         # Second row: Advanced metrics  
+        st.markdown("---")
+        st.subheader("Advanced Metrics")
         col1, col2, col3, col4 = st.columns(4)
         with col1:
             # Dynamic profit factor with more thresholds
@@ -262,8 +291,8 @@ if fileUpload is not None:
                 help="Maximum percentage drop from peak to trough"
             )
         
-        # Third row: Trading statistics - showing fewer icons here
-        col1, col2, col3 = st.columns(3)
+        # Third row: Trading statistics
+        col1, col2, col3 = st.columns(3, border=True)
         with col1:
             avg_win = winning_trades['gross_profit'].mean() if len(winning_trades) > 0 else 0
             avg_loss = losing_trades['gross_profit'].mean() if len(losing_trades) > 0 else 0
@@ -274,27 +303,46 @@ if fileUpload is not None:
                 delta=None,
                 help="Average profit on winning trades"
             )
-        with col2:
+
             st.metric(
                 "Avg Loss", 
                 f"€{avg_loss:.2f}",
                 delta=None,
                 help="Average loss on losing trades"
             )
+        with col2:
+                largest_win = completed_trades['gross_profit'].max()
+                st.metric(
+                    "🏆 Largest Win", 
+                    f"€{largest_win:.2f}",
+                    delta=f"{largest_win/initial_account_size*100:.2f}% of capital" if initial_account_size > 0 else None,
+                    delta_color="normal",
+                    help="Largest single winning trade"
+                )
+
+                largest_loss = completed_trades['gross_profit'].min()
+                st.metric(
+                    "📉 Largest Loss", 
+                    f"€{largest_loss:.2f}",
+                    delta=f"{largest_loss/initial_account_size*100:.2f}% of capital" if initial_account_size > 0 else None,
+                    delta_color="normal",
+                    help="Largest single losing trade"
+                )
         with col3:
             win_loss_ratio = abs(avg_win/avg_loss) if avg_loss != 0 else float('inf')
-            
-            # Only use color for the ratio, no icon needed
-            st.metric(
-                "Win/Loss Ratio", 
-                f"{win_loss_ratio:.2f}" if win_loss_ratio != float('inf') else "∞",
-                delta=f"{win_loss_ratio-1:.2f} vs 1.0" if win_loss_ratio != float('inf') and win_loss_ratio != 1 else None,
-                delta_color="normal" if win_loss_ratio > 1 else "inverse",
-                help="Ratio of average win to average loss (>1 is better)"
+            st.metric("Winning Trades",
+                    f"{len(winning_trades)}",
+                delta_color="normal" if len(winning_trades) > 0 else "inverse",
+                help="Total number of winning trades"
             )
+            st.metric("Losing Trades",
+                        f"{len(losing_trades)}",
+                    delta_color="normal" if len(losing_trades) > 0 else "inverse",
+                    help="Total number of losing trades"
+                )
         
         # Fourth row: Win/Loss statistics
-        col1, col2, col3 = st.columns(3)
+        col1, col2, col3 = st.columns(3, border=True)
         with col1:
             win_count = len(winning_trades)
             loss_count = len(losing_trades)
@@ -324,30 +372,6 @@ if fileUpload is not None:
                     "Daily Volatility", 
                     f"€{daily_std:.2f}",
                     help="Standard deviation of daily returns"
-                )
-        
-        # Fifth row: Extreme values - separated for better styling
-        if len(completed_trades) > 0:
-            col1, col2 = st.columns(2)
-            with col1:
-                largest_win = completed_trades['gross_profit'].max()
-                
-                st.metric(
-                    "🏆 Largest Win", 
-                    f"€{largest_win:.2f}",
-                    delta=f"{largest_win/initial_account_size*100:.2f}% of capital" if initial_account_size > 0 else None,
-                    delta_color="normal",
-                    help="Largest single winning trade"
-                )
-            with col2:
-                largest_loss = completed_trades['gross_profit'].min()
-                
-                st.metric(
-                    "📉 Largest Loss", 
-                    f"€{largest_loss:.2f}",
-                    delta=f"{largest_loss/initial_account_size*100:.2f}% of capital" if initial_account_size > 0 else None,
-                    delta_color="normal",
-                    help="Largest single losing trade"
                 )
         
         # Risk metrics section
@@ -394,6 +418,7 @@ if fileUpload is not None:
                 )
 
         # Balance and Equity over time
+        st.markdown("---")
         st.subheader("Account Performance")
 
         time_data = processed_df.sort_values('event_time')
@@ -463,11 +488,13 @@ if fileUpload is not None:
     with tab2:
         st.header("Time-Based Analysis")
         
+
+        # Weekday performance with Buy/Sell breakdown
+        st.subheader("Performance by Weekday")
         col1, col2 = st.columns(2)
-        
+        weekday_order = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday']
         with col1:
-            # Weekday performance with Buy/Sell breakdown
-            st.subheader("Performance by Weekday")
+            
             weekday_trade_stats = completed_trades.pivot_table(
                 values='gross_profit', 
                 index='weekday',
@@ -476,87 +503,528 @@ if fileUpload is not None:
             ).fillna(0)
             
             # Reorder weekdays
-            weekday_order = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday']
+        
             weekday_trade_stats = weekday_trade_stats.reindex(weekday_order)
-            
-            st.write(weekday_trade_stats)
-            
+
+            # Original chart with buy/sell breakdown
             weekday_fig = px.bar(
                 completed_trades,
                 x='weekday',
                 y='gross_profit',
                 color='trade_type',
+                color_discrete_map={'Buy': LONG_COLOR, 'Sell': SHORT_COLOR},
                 category_orders={"weekday": weekday_order},
-                title="Profit/Loss by Weekday",
+                title="Profit/Loss by Weekday (Buy/Sell)",
                 labels={"gross_profit": "Profit/Loss (€)", "weekday": "Day of Week", "trade_type": "Position Type"}
             )
             
+            weekday_fig.add_hline(y=0, line_dash="solid", line_color="black", line_width=2, opacity=0.5)
             weekday_fig.update_layout(height=400)
             st.plotly_chart(weekday_fig, use_container_width=True)
+
+        with st.expander("Detailed Statistics by Weekday"):
+                st.write(weekday_trade_stats)
+                st.write("Total Trades:", weekday_trade_stats['count'].sum())
+                st.write("Total Profit/Loss (€):", weekday_trade_stats['sum'].sum())
+                st.write("Average Profit/Loss per Trade (€):", (weekday_trade_stats['sum'] / weekday_trade_stats['count']).mean())
+
         
         with col2:
-            st.subheader("Performance by Hour")
-            hourly_trade_stats = completed_trades.pivot_table(
-                values='gross_profit', 
-                index='hour',
-                columns='trade_type', 
-                aggfunc=['sum', 'mean', 'count']
-            ).fillna(0)
+            # New chart with total P/L per day
+            daily_total = completed_trades.groupby('weekday')['gross_profit'].sum().reindex(weekday_order)
+            total_fig = px.bar(
+                x=daily_total.index,
+                y=daily_total.values,
+                title="Total Profit/Loss by Weekday",
+                labels={"x": "Day of Week", "y": "Total Profit/Loss (€)"},
+                color=daily_total.values > 0,
+                color_discrete_map={True: SHORT_COLOR, False: LONG_COLOR},
+            )
             
-            st.write(hourly_trade_stats)
-            
-            hour_fig = px.bar(
+            total_fig.add_hline(y=0, line_dash="solid", line_color="black", line_width=2, opacity=0.5)
+            total_fig.update_layout(height=400)
+            st.plotly_chart(total_fig, use_container_width=True)
+
+        st.markdown("---")
+        st.subheader("Performance by Hour")
+
+        hourly_trade_stats = completed_trades.pivot_table(
+            values='gross_profit', 
+            index='hour',
+            columns='trade_type', 
+            aggfunc=['sum', 'mean', 'count']
+        ).fillna(0)
+        
+        hour_fig = px.bar(
                 completed_trades,
                 x='hour',
                 y='gross_profit',
                 color='trade_type',
                 title="Profit/Loss by Hour",
                 labels={"gross_profit": "Profit/Loss (€)", "hour": "Hour of Day", "trade_type": "Position Type"}
-            )
-            
-            hour_fig.update_layout(height=400)
-            st.plotly_chart(hour_fig, use_container_width=True)
+        )         
+        hour_fig.update_layout(height=400)
+        st.plotly_chart(hour_fig, use_container_width=True)
+        with st.expander("Detailed Statistics by Hour"):
+            st.write(hourly_trade_stats)
+            st.write("Total Trades:", hourly_trade_stats['count'].sum())
+            st.write("Total Profit/Loss (€):", hourly_trade_stats['sum'].sum())
+            st.write("Average Profit/Loss per Trade (€):", (hourly_trade_stats['sum'] / hourly_trade_stats['count']).mean())
             
     with tab3:
         st.header("Position Analysis")
         
+        # Pie chart of position types
+        st.subheader("Position Types Distribution")
         col1, col2 = st.columns(2)
         
         with col1:
-            # Pie chart of position types
-            st.subheader("Position Types Distribution")
-            
             position_counts = completed_trades['trade_type'].value_counts()
             
             pie_fig = px.pie(
-                values=position_counts.values,
-                names=position_counts.index,
-                title="Distribution of Trade Types",
-                hole=0.3
+            values=position_counts.values,
+            names=position_counts.index,
+            title="Distribution of Trade Types",
+            hole=0.3
             )
             
             pie_fig.update_layout(height=400)
             st.plotly_chart(pie_fig, use_container_width=True)
             
         with col2:
-            st.subheader("Performance by Position Type")
-            
             position_stats = completed_trades.groupby('trade_type')['gross_profit'].agg(['sum', 'mean', 'count'])
-            st.write(position_stats)
-            
             position_fig = px.bar(
-                position_stats.reset_index(),
-                x='trade_type',
-                y='sum',
-                color='trade_type',
-                title="Profit/Loss by Position Type",
-                labels={"sum": "Profit/Loss (€)", "trade_type": "Position Type"}
+            position_stats.reset_index(),
+            x='trade_type',
+            y='sum',
+            color='trade_type',
+            title="Profit/Loss by Position Type",
+            labels={"sum": "Profit/Loss (€)", "trade_type": "Position Type"}
             )
             
             position_fig.update_layout(height=400)
             st.plotly_chart(position_fig, use_container_width=True)
-    
+
+        # New section for trade pattern analysis
+        st.markdown("---")
+        st.subheader("Trade Pattern Analysis")
+
+        # Sort trades by profit/loss
+        best_trades = completed_trades.nlargest(10, 'gross_profit')
+        worst_trades = completed_trades.nsmallest(10, 'gross_profit')
+
+        col3, col4 = st.columns(2)
+
+        with col3:
+            st.write("Top 10 Most Profitable Trades")
+            st.dataframe(best_trades[['event_time', 'trade_type', 'volume', 'gross_profit', 'duration', 'weekday', 'hour']])
+            
+            st.write("Patterns in Most Profitable Trades:")
+            best_patterns = pd.DataFrame({
+            'Average Duration (min)': best_trades['duration'].dt.total_seconds().mean() / 60,
+            'Most Common Hour': best_trades['hour'].mode()[0],
+            'Most Common Day': best_trades['weekday'].mode()[0], 
+            'Average Volume': best_trades['volume'].mean(),
+            'Position Type Split': best_trades['trade_type'].value_counts().to_dict()
+            }, index=[0])
+            
+            st.dataframe(best_patterns)
+
+        with col4:
+            st.write("Top 10 Least Profitable Trades")
+            st.dataframe(worst_trades[['event_time', 'trade_type', 'volume', 'gross_profit', 'duration', 'weekday', 'hour']])
+            
+            st.write("Patterns in Least Profitable Trades:")
+            worst_patterns = pd.DataFrame({
+            'Average Duration (min)': worst_trades['duration'].dt.total_seconds().mean() / 60,
+            'Most Common Hour': worst_trades['hour'].mode()[0],
+            'Most Common Day': worst_trades['weekday'].mode()[0],
+            'Average Volume': worst_trades['volume'].mean(),
+            'Position Type Split': worst_trades['trade_type'].value_counts().to_dict()
+            }, index=[0])
+            
+            st.dataframe(worst_patterns)
+
+        # Duration analysis
+        st.subheader("Trade Duration vs Profit Analysis")
+        
+        # Convert duration to minutes for better visualization
+        duration_profit_fig = px.scatter(
+            completed_trades,
+            x=completed_trades['duration'].dt.total_seconds() / 60,
+            y='gross_profit',
+            color='trade_type',
+            title="Trade Duration vs Profit",
+            labels={
+            "x": "Duration (minutes)",
+            "y": "Profit/Loss (€)",
+            "trade_type": "Position Type"
+            }
+        )
+        
+        duration_profit_fig.add_hline(y=0, line_dash="dash", line_color="black")
+        st.plotly_chart(duration_profit_fig, use_container_width=True)
+
+        # Trade volume analysis
+        st.subheader("Volume Analysis")
+        
+        volume_profit_fig = px.scatter(
+            completed_trades,
+            x='volume',
+            y='gross_profit',
+            color='trade_type',
+            title="Trade Volume vs Profit",
+            labels={
+            "volume": "Volume",
+            "gross_profit": "Profit/Loss (€)",
+            "trade_type": "Position Type"
+            }
+        )
+        
+        volume_profit_fig.add_hline(y=0, line_dash="dash", line_color="black")
+        st.plotly_chart(volume_profit_fig, use_container_width=True)
+
     with tab4:
+        st.header("Trade Sequence Analysis")
+        
+        # Calculate trade streaks
+        if len(completed_trades) > 0:
+            # Sort trades chronologically
+            time_sorted_trades = completed_trades.sort_values('event_time')
+            
+            # Calculate consecutive win/loss streaks
+            time_sorted_trades['is_win'] = time_sorted_trades['gross_profit'] > 0
+            
+            # Initialize streak counters
+            current_streak = 1
+            max_win_streak = 0
+            max_loss_streak = 0
+            current_is_win = None
+            
+            streak_data = []
+            
+            # Iterate through trades to identify streaks
+            for i in range(len(time_sorted_trades)):
+                is_win = time_sorted_trades['is_win'].iloc[i]
+                
+                if i == 0:
+                    # First trade initializes the streak
+                    current_is_win = is_win
+                elif is_win == current_is_win:
+                    # Continuing streak
+                    current_streak += 1
+                else:
+                    # Streak ended, record it
+                    streak_data.append({
+                        'streak_length': current_streak,
+                        'is_win': current_is_win,
+                        'end_time': time_sorted_trades['event_time'].iloc[i-1]
+                    })
+                    
+                    # Reset streak
+                    current_streak = 1
+                    current_is_win = is_win
+            
+            # Add the last streak
+            streak_data.append({
+                'streak_length': current_streak,
+                'is_win': current_is_win,
+                'end_time': time_sorted_trades['event_time'].iloc[-1]
+            })
+            
+            # Convert to DataFrame for analysis
+            streaks_df = pd.DataFrame(streak_data)
+            
+            # Calculate streak statistics
+            win_streaks = streaks_df[streaks_df['is_win']]
+            loss_streaks = streaks_df[~streaks_df['is_win']]
+            
+            max_win_streak = win_streaks['streak_length'].max() if len(win_streaks) > 0 else 0
+            max_loss_streak = loss_streaks['streak_length'].max() if len(loss_streaks) > 0 else 0
+            avg_win_streak = win_streaks['streak_length'].mean() if len(win_streaks) > 0 else 0
+            avg_loss_streak = loss_streaks['streak_length'].mean() if len(loss_streaks) > 0 else 0
+            
+            # Display streak metrics
+            col1, col2, col3 = st.columns(3)
+            
+            with col1:
+                st.metric(
+                    "🏆 Max Win Streak",
+                    f"{max_win_streak}",
+                    help="Maximum consecutive winning trades"
+                )
+                
+                st.metric(
+                    "📊 Avg Win Streak",
+                    f"{avg_win_streak:.1f}",
+                    help="Average length of winning streaks"
+                )
+            
+            with col2:
+                st.metric(
+                    "⚠️ Max Loss Streak",
+                    f"{max_loss_streak}",
+                    help="Maximum consecutive losing trades"
+                )
+                
+                st.metric(
+                    "📊 Avg Loss Streak",
+                    f"{avg_loss_streak:.1f}",
+                    help="Average length of losing streaks"
+                )
+                
+            with col3:
+                # Calculate streak ratio (win/loss)
+                streak_ratio = avg_win_streak / avg_loss_streak if avg_loss_streak > 0 else float('inf')
+                
+                st.metric(
+                    "⚖️ Streak Ratio",
+                    f"{streak_ratio:.2f}",
+                    delta_color="normal" if streak_ratio > 1 else "inverse",
+                    help="Ratio of average win streak to average loss streak"
+                )
+                
+                # Calculate number of streaks
+                streak_count = len(streaks_df)
+                
+                st.metric(
+                    "🔄 Total Streaks",
+                    f"{streak_count}",
+                    help="Total number of winning and losing streaks"
+                )
+            
+            # Visualize streaks
+            st.subheader("Trading Streaks Over Time")
+            
+            # Create a DataFrame with streak type and magnitude for visualization
+            vis_data = []
+            current_time = time_sorted_trades['event_time'].min()
+            
+            for _, streak in streaks_df.iterrows():
+                vis_data.append({
+                    'end_time': streak['end_time'],
+                    'streak_length': streak['streak_length'] if streak['is_win'] else -streak['streak_length'],
+                    'type': 'Win' if streak['is_win'] else 'Loss'
+                })
+            
+            vis_df = pd.DataFrame(vis_data)
+            
+            # Plot streak visualization
+            streak_fig = px.bar(
+                vis_df,
+                x='end_time',
+                y='streak_length',
+                color='type',
+                title="Win and Loss Streaks Over Time",
+                labels={
+                    "end_time": "Date",
+                    "streak_length": "Streak Length",
+                    "type": "Streak Type"
+                },
+                color_discrete_map={
+                    'Win': SHORT_COLOR,
+                    'Loss': LONG_COLOR
+                }
+            )
+            
+            streak_fig.add_hline(y=0, line_dash="solid", line_color="black", line_width=1)
+            streak_fig.update_layout(height=400)
+            st.plotly_chart(streak_fig, use_container_width=True)
+            
+        # Calculate profit per minute
+        st.subheader("Profit per Minute Analysis")
+        
+        if len(completed_trades) > 0:
+            # Calculate duration in minutes and profit per minute
+            completed_trades['duration_minutes'] = completed_trades['duration'].dt.total_seconds() / 60
+            completed_trades['profit_per_minute'] = completed_trades['gross_profit'] / completed_trades['duration_minutes']
+            
+            # Remove infinite values (trades with zero duration)
+            profit_per_min_df = completed_trades[~np.isinf(completed_trades['profit_per_minute'])]
+            profit_per_min_df = profit_per_min_df[~np.isnan(profit_per_min_df['profit_per_minute'])]
+            
+            col1, col2 = st.columns(2)
+            
+            with col1:
+                # Display metrics
+                avg_ppm = profit_per_min_df['profit_per_minute'].mean()
+                median_ppm = profit_per_min_df['profit_per_minute'].median()
+                
+                st.metric(
+                    "Average Profit/Min",
+                    f"€{avg_ppm:.2f}/min",
+                    delta_color="normal" if avg_ppm > 0 else "inverse",
+                    help="Average profit generated per minute in trade"
+                )
+                
+                st.metric(
+                    "Median Profit/Min",
+                    f"€{median_ppm:.2f}/min",
+                    delta_color="normal" if median_ppm > 0 else "inverse",
+                    help="Median profit generated per minute in trade"
+                )
+            
+            with col2:
+                # Additional metrics
+                max_ppm = profit_per_min_df['profit_per_minute'].max()
+                min_ppm = profit_per_min_df['profit_per_minute'].min()
+                
+                st.metric(
+                    "Best Profit/Min",
+                    f"€{max_ppm:.2f}/min",
+                    help="Highest profit per minute"
+                )
+                
+                st.metric(
+                    "Worst Profit/Min",
+                    f"€{min_ppm:.2f}/min",
+                    help="Lowest profit per minute (biggest loss per minute)"
+                )
+            
+            # Scatter plot of Duration vs. Profit/Minute
+            ppm_fig = px.scatter(
+                profit_per_min_df,
+                x='duration_minutes',
+                y='profit_per_minute',
+                color='trade_type',
+                hover_data=['gross_profit', 'event_time'],
+                title="Trade Duration vs. Profit per Minute",
+                labels={
+                    "duration_minutes": "Duration (minutes)",
+                    "profit_per_minute": "Profit per Minute (€/min)",
+                    "trade_type": "Position Type",
+                    "gross_profit": "Total Profit (€)",
+                    "event_time": "Trade Date"
+                }
+            )
+            
+            ppm_fig.add_hline(y=0, line_dash="dash", line_color="black")
+            ppm_fig.update_layout(height=500)
+            st.plotly_chart(ppm_fig, use_container_width=True)
+            
+        # Day of Month Performance Calendar
+        st.subheader("Performance by Day of Month")
+        
+        if len(completed_trades) > 0:
+            # Extract day of month
+            completed_trades['day_of_month'] = completed_trades['event_time'].dt.day
+            completed_trades['month'] = completed_trades['event_time'].dt.month
+            completed_trades['year'] = completed_trades['event_time'].dt.year
+            
+            # Group by day of month
+            day_stats = completed_trades.groupby('day_of_month').agg({
+                'gross_profit': ['sum', 'mean', 'count'],
+                'event_time': 'count'
+            })
+            
+            # Flatten column MultiIndex
+            day_stats.columns = ['_'.join(col).strip() for col in day_stats.columns.values]
+            day_stats = day_stats.rename(columns={'event_time_count': 'trade_count'})
+            day_stats = day_stats.reset_index()
+            
+            # Create calendar-style visualization
+            # We'll create a grid of days 1-31 with color indicating performance
+            
+            # Calculate max trades per day for sizing
+            max_trades = day_stats['trade_count'].max()
+            min_trades = day_stats['trade_count'].min()
+            
+            # Create calendar figure with 31 days (5 rows x 7 cols with some empty cells)
+            rows, cols = 5, 7
+            
+            # Create a blank calendar grid
+            calendar_data = []
+            
+            # Days 1-31 arranged in a calendar layout
+            day = 1
+            for row in range(rows):
+                for col in range(cols):
+                    if day <= 31:  # Valid day of month
+                        # Get statistics for this day if available
+                        day_data = day_stats[day_stats['day_of_month'] == day]
+                        if len(day_data) > 0:
+                            profit_sum = day_data['gross_profit_sum'].iloc[0]
+                            profit_mean = day_data['gross_profit_mean'].iloc[0]
+                            trade_count = day_data['trade_count'].iloc[0]
+                        else:
+                            profit_sum = 0
+                            profit_mean = 0
+                            trade_count = 0
+                            
+                        calendar_data.append({
+                            'row': row,
+                            'col': col,
+                            'day': day,
+                            'profit_sum': profit_sum,
+                            'profit_mean': profit_mean,
+                            'trade_count': trade_count,
+                            'color': 'green' if profit_sum > 0 else 'red',
+                            'size': 10 + (30 * trade_count / max_trades if max_trades > 0 else 0)
+                        })
+                        day += 1
+            
+            calendar_df = pd.DataFrame(calendar_data)
+            
+            # Create a calendar heatmap
+            fig = go.Figure()
+            
+            # Add days with trades as markers
+            for _, day_data in calendar_df.iterrows():
+                if day_data['trade_count'] > 0:
+                    color = SHORT_COLOR if day_data['profit_sum'] > 0 else LONG_COLOR
+                    opacity = 0.7
+                    
+                    # Special emphasis if highly profitable or unprofitable
+                    if abs(day_data['profit_sum']) > gross_profit / 10:  # More than 10% of total profit
+                        opacity = 1.0
+                    
+                    fig.add_trace(go.Scatter(
+                        x=[day_data['col']],
+                        y=[rows - 1 - day_data['row']],  # Invert y-axis for top-to-bottom
+                        mode='markers+text',
+                        marker=dict(
+                            size=day_data['size'],
+                            color=color,
+                            opacity=opacity,
+                            line=dict(width=1, color='black')
+                        ),
+                        text=str(int(day_data['day'])),
+                        textposition='middle center',
+                        name=f"Day {int(day_data['day'])}: €{day_data['profit_sum']:.2f} ({int(day_data['trade_count'])} trades)",
+                        hoverinfo='name'
+                    ))
+                else:
+                    # Add day number for days without trades
+                    fig.add_trace(go.Scatter(
+                        x=[day_data['col']],
+                        y=[rows - 1 - day_data['row']],
+                        mode='text',
+                        text=str(int(day_data['day'])),
+                        textposition='middle center',
+                        marker=dict(opacity=0),
+                        name=f"Day {int(day_data['day'])}: No trades",
+                        hoverinfo='name'
+                    ))
+            
+            # Set axis ranges
+            fig.update_xaxes(range=[-0.5, cols - 0.5], visible=False)
+            fig.update_yaxes(range=[-0.5, rows - 0.5], visible=False)
+            
+            fig.update_layout(
+                title="Monthly Calendar: Profit by Day of Month (Size = Number of Trades)",
+                showlegend=False,
+                height=400,
+                width=800,
+                margin=dict(l=20, r=20, t=50, b=20),
+                plot_bgcolor='rgba(240, 240, 240, 0.5)'
+            )
+            
+            st.plotly_chart(fig, use_container_width=True)
+            
+            # Show detailed statistics
+            with st.expander("Detailed Day of Month Statistics"):
+                st.dataframe(day_stats.sort_values('day_of_month'))
+    with tab5:
         st.header("Raw Trade Data")
         
         # Add a filter for event type
