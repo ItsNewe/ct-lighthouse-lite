@@ -4,6 +4,7 @@ import numpy as np
 import os
 import plotly.express as px
 import plotly.graph_objects as go
+from pathlib import Path
 
 SHORT_COLOR = "#00CC96"
 LONG_COLOR = "#EF553B"
@@ -11,7 +12,9 @@ logo_path: str = "static/favicon.png"
 
 st.set_page_config(page_title="Lighthouse",
     page_icon="static/favicon.png" if os.path.exists(logo_path) else "🛰️",
-    layout="wide")  # Use wide layout for dashboard
+    layout="wide"
+)
+
 # Create header with logo and title
 header_col1, header_col2 = st.columns([0.1, 0.9])
 with header_col1:
@@ -23,7 +26,32 @@ with header_col2:
 
 
 def processCsv(file):
-    df = pd.read_csv(fileUpload)
+    df = pd.DataFrame()
+    match Path(file.name).suffix:
+        # Check file extension and read accordingly
+        case ".xlsx":
+            df = pd.read_excel(file, engine='openpyxl')
+
+        case ".xls":
+            df = pd.read_excel(file, engine='xlrd')
+
+        case ".csv":
+            try:
+                df = pd.read_csv(file, encoding='utf-8')
+            except UnicodeDecodeError:
+                try:
+                    file.seek(0)
+                    df = pd.read_csv(file, encoding="ISO-8859-1")
+                except Exception as e:
+                    st.error(f"Error reading CSV file: {e}")
+                    return pd.DataFrame(), pd.DataFrame()
+
+        case ".ods":
+            df = pd.read_excel(file, engine='odf')
+
+        case _:
+            st.error("Unsupported file format. Please upload a CSV, Excel, or ODS file.")
+    
     processed_df = df.copy()
 
     column_mapping = {
@@ -44,11 +72,27 @@ def processCsv(file):
         'Equity': 'equity',
         'Serial #': 'serial_number'
     }
+
+
     processed_df.rename(columns=column_mapping, inplace=True)
 
+    # Map French event types to English for consistent filtering
+    event_mapping = {
+        'Créer une Position': 'Create Position',
+        'Succès du Stop Loss': 'Stop Loss Hit',
+        'Succès du Take Profit': 'Take Profit Hit',
+        'Position modifiée (S/L)': 'Position modified (S/L)',
+        'Position Fermée': 'Position closed',
+        'Position fermée': 'Position closed'
+    }
+    
+    if 'event_type' in processed_df.columns:
+        processed_df['event_type'] = processed_df['event_type'].map(
+            lambda x: event_mapping.get(x, x)
+    )
     processed_df['event_time'] = pd.to_datetime(
         processed_df['event_time'], 
-        format='%d/%m/%Y %H:%M:%S.%f'
+        format='mixed' #'%d/%m/%Y %H:%M:%S.%f'
     )
     
     processed_df['weekday'] = processed_df['event_time'].dt.day_name()
@@ -90,6 +134,7 @@ def processCsv(file):
     )
     # Filter for completed trades (Take Profit/Stop Loss/Position closed events)
     return processed_df, processed_df[processed_df['event_type'].isin(['Take Profit Hit', 'Stop Loss Hit', 'Position closed'])]
+
 #! Unused for now
 #db = st.connection('mysql', type="sql")
 
@@ -100,20 +145,22 @@ max_daily_loss = st.sidebar.number_input("Max Daily Loss (€)", min_value=100, 
 max_total_loss = st.sidebar.number_input("Max Total Loss (€)", min_value=1000, value=4000, step=500)
 
 processed_df, completed_trades = pd.DataFrame(), pd.DataFrame()
-fileUpload = st.file_uploader("Upload a trading data CSV file", type=["csv"])
+
+fileUpload = st.file_uploader("Upload a trading data CSV file", type=["csv", "xlsx", "xls", "ods"])
 if fileUpload is not None:
     processed_df, completed_trades = processCsv(fileUpload)
-    # Add button to load sample data
+
+
 load_sample = st.button("Load Sample Data")
 if load_sample:
-    # Use sample data path relative to main.py
     sample_path = os.path.join(os.path.dirname(__file__), "static", "sample.csv")
     if os.path.exists(sample_path):
         fileUpload = open(sample_path, "rb")
         processed_df, completed_trades = processCsv(fileUpload)
     else:
         st.error("Sample data file not found")
-# Calculate additional metrics
+
+
 if not completed_trades.empty:
     # 1. Profit Factor = Gross Profits / Gross Losses
     winning_trades = completed_trades[completed_trades['gross_profit'] > 0]
@@ -683,6 +730,189 @@ if not completed_trades.empty:
         
         volume_profit_fig.add_hline(y=0, line_dash="dash", line_color="black")
         st.plotly_chart(volume_profit_fig, use_container_width=True)
+
+        # Add this to tab3 (Position Analysis) after the volume analysis section
+
+        # Trailing Stop Analysis
+        st.markdown("---")
+        st.subheader("Trailing Stop Analysis")
+
+        # Identify trailing stop events
+        trailing_stop_events = processed_df[processed_df['event_type'] == 'Position modified (S/L)']
+
+        if not trailing_stop_events.empty:
+            # Count positions that used trailing stops
+            positions_with_ts = trailing_stop_events['position_id'].nunique()
+            total_positions = processed_df['position_id'].nunique()
+            ts_usage_percent = (positions_with_ts / total_positions) * 100 if total_positions > 0 else 0
+            
+            col1, col2, col3 = st.columns(3)
+            
+            with col1:
+                st.metric(
+                    "🔄 Positions Using Trailing Stops",
+                    f"{positions_with_ts}/{total_positions}",
+                    delta=f"{ts_usage_percent:.1f}% of all positions",
+                    help="Number of positions that used trailing stops"
+                )
+                
+                # Average number of trailing stop adjustments per position
+                ts_adjustments_per_position = trailing_stop_events.groupby('position_id').size().mean()
+                st.metric(
+                    "⚙️ Avg Adjustments Per Position",
+                    f"{ts_adjustments_per_position:.1f}",
+                    help="Average number of trailing stop adjustments per position"
+                )
+            
+            with col2:
+                # Compare profitability of positions with/without trailing stops
+                positions_with_ts_list = trailing_stop_events['position_id'].unique()
+                completed_with_ts = completed_trades[completed_trades['position_id'].isin(positions_with_ts_list)]
+                completed_without_ts = completed_trades[~completed_trades['position_id'].isin(positions_with_ts_list)]
+                
+                avg_profit_with_ts = completed_with_ts['gross_profit'].mean() if len(completed_with_ts) > 0 else 0
+                avg_profit_without_ts = completed_without_ts['gross_profit'].mean() if len(completed_without_ts) > 0 else 0
+                
+                profit_diff = avg_profit_with_ts - avg_profit_without_ts
+                
+                st.metric(
+                    "💰 Avg P/L With Trailing Stops",
+                    f"€{avg_profit_with_ts:.2f}",
+                    delta=f"€{profit_diff:.2f} vs without TS",
+                    delta_color="normal" if profit_diff > 0 else "inverse",
+                    help="Average profit/loss for positions using trailing stops"
+                )
+                
+                # Win rate with trailing stops
+                win_rate_with_ts = (completed_with_ts['gross_profit'] > 0).mean() * 100 if len(completed_with_ts) > 0 else 0
+                win_rate_without_ts = (completed_without_ts['gross_profit'] > 0).mean() * 100 if len(completed_without_ts) > 0 else 0
+                
+                st.metric(
+                    "🎯 Win Rate With Trailing Stops",
+                    f"{win_rate_with_ts:.1f}%",
+                    delta=f"{win_rate_with_ts - win_rate_without_ts:.1f}% vs without TS",
+                    delta_color="normal" if win_rate_with_ts > win_rate_without_ts else "inverse",
+                    help="Win rate for positions using trailing stops"
+                )
+            
+            with col3:
+                # Average duration with trailing stops vs without
+                avg_duration_with_ts = completed_with_ts['duration'].mean().total_seconds() / 60 if len(completed_with_ts) > 0 else 0
+                avg_duration_without_ts = completed_without_ts['duration'].mean().total_seconds() / 60 if len(completed_without_ts) > 0 else 0
+                
+                st.metric(
+                    "⏱️ Avg Duration With Trailing Stops",
+                    f"{avg_duration_with_ts:.1f} min",
+                    delta=f"{avg_duration_with_ts - avg_duration_without_ts:.1f} min vs without TS",
+                    delta_color="off",
+                    help="Average position duration with trailing stops"
+                )
+                
+                # Calculate average stop loss tightening
+                if len(trailing_stop_events) >= 2:
+                    ts_positions = trailing_stop_events.groupby('position_id')
+                    avg_tightening_pips = 0
+                    position_count = 0
+                    
+                    for position_id, events in ts_positions:
+                        if len(events) >= 2:
+                            position_count += 1
+                            # Sort by event time to get first and last stop loss value
+                            events_sorted = events.sort_values('event_time')
+                            first_sl = events_sorted['stop_loss'].iloc[0]
+                            last_sl = events_sorted['stop_loss'].iloc[-1]
+                            
+                            # Get the trade type to determine if tightening is moving up or down
+                            trade_type = processed_df[processed_df['position_id'] == position_id]['trade_type'].iloc[0]
+                            
+                            # For Buy positions, tightening means moving SL up
+                            # For Sell positions, tightening means moving SL down
+                            if trade_type == 'Buy':
+                                tightening = last_sl - first_sl
+                            else:  # Sell
+                                tightening = first_sl - last_sl
+                            
+                            avg_tightening_pips += tightening
+                    
+                    if position_count > 0:
+                        avg_tightening_pips = avg_tightening_pips / position_count
+                        st.metric(
+                            "📏 Avg Stop Loss Tightening",
+                            f"{avg_tightening_pips:.1f} pips",
+                            help="Average amount the stop loss was tightened by trailing"
+                        )
+            
+            # Visualization of trailing stop adjustments
+            st.subheader("Trailing Stop Adjustment Patterns")
+            
+            # Get time differences between consecutive trailing stop adjustments
+            ts_patterns = trailing_stop_events.sort_values(['position_id', 'event_time'])
+            ts_patterns['next_event_time'] = ts_patterns.groupby('position_id')['event_time'].shift(-1)
+            ts_patterns['time_between_adjustments'] = (ts_patterns['next_event_time'] - ts_patterns['event_time']).dt.total_seconds() / 60
+            ts_patterns = ts_patterns.dropna(subset=['time_between_adjustments'])
+            
+            if not ts_patterns.empty:
+                col1, col2 = st.columns(2)
+                
+                with col1:
+                    # Distribution of time between adjustments
+                    time_between_fig = px.histogram(
+                        ts_patterns,
+                        x='time_between_adjustments',
+                        title="Time Between Trailing Stop Adjustments",
+                        labels={
+                            "time_between_adjustments": "Minutes Between Adjustments",
+                            "count": "Frequency"
+                        },
+                        color_discrete_sequence=[SHORT_COLOR]
+                    )
+                    
+                    time_between_fig.update_layout(height=400)
+                    st.plotly_chart(time_between_fig, use_container_width=True)
+                
+                with col2:
+                    # Group trailing stop counts by position
+                    ts_counts = ts_patterns.groupby('position_id').size().reset_index(name='adjustment_count')
+                    
+                    # Count distribution
+                    count_fig = px.histogram(
+                        ts_counts,
+                        x='adjustment_count',
+                        title="Number of Trailing Stop Adjustments per Position",
+                        labels={
+                            "adjustment_count": "Number of Adjustments",
+                            "count": "Number of Positions"
+                        },
+                        color_discrete_sequence=[LONG_COLOR]
+                    )
+                    
+                    count_fig.update_layout(height=400)
+                    st.plotly_chart(count_fig, use_container_width=True)
+            
+            # Detailed trailing stop statistics
+            with st.expander("Detailed Trailing Stop Statistics"):
+                # Most active positions with trailing stops
+                most_active_ts = trailing_stop_events.groupby('position_id').size().sort_values(ascending=False).reset_index(name='adjustment_count')
+                most_active_ts = most_active_ts.merge(
+                    completed_trades[['position_id', 'gross_profit', 'trade_type']],
+                    on='position_id',
+                    how='left'
+                )
+                
+                st.write("Positions with Most Trailing Stop Adjustments")
+                st.dataframe(most_active_ts)
+                
+                # Analyze if more adjustments correlate with better results
+                if len(most_active_ts) > 1:
+                    correlation = most_active_ts['adjustment_count'].corr(most_active_ts['gross_profit'])
+                    st.metric(
+                        "Correlation: Adjustments vs Profit",
+                        f"{correlation:.2f}",
+                        delta_color="normal" if correlation > 0 else "inverse",
+                        help="Correlation between number of trailing stop adjustments and profit. Positive means more adjustments = more profit."
+                    )
+        else:
+            st.info("No trailing stop adjustments found in the dataset. Try uploading a dataset with 'Position modified (S/L)' events.")
 
     with tab4:
         st.header("Trade Sequence Analysis")
