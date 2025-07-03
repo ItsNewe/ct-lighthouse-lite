@@ -15,7 +15,8 @@ services:
       - traefik.enable=true
       - traefik.http.routers.lighthouse.rule=Host(${TRAEFIK_HOST}) && PathPrefix(${TRAEFIK_PATHPREFIX})
       - traefik.http.routers.lighthouse.entrypoints=websecure
-      - traefik.http.routers.lighthouse.tls.certresolver=letsencrypt
+      - traefik.http.routers.tinyauth.tls.certresolver=letsencrypt
+      - traefik.http.routers.tinyauth.tls=true
       - traefik.http.routers.lighthouse.priority=10
       - traefik.http.middlewares.lighthouse-stripprefix.stripprefix.prefixes=/lighthouse
       - traefik.http.routers.lighthouse.middlewares=lighthouse-stripprefix
