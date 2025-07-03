@@ -26,5 +26,5 @@ volumes:
     external: true
 
 networks:
-  traefik:
+  ${DEPLOYMENT_NETWORKNAME}:
     external: true
