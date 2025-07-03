@@ -1,26 +1,30 @@
 services:
   app:
     image: ghcr.io/itsnewe/ct-lighthouse-lite:master
-    ports:
-      - "8501:8501"
+    # Ports will be handled by Traefik
+    # ports:
+    #   - "8501:8501"
     environment:
       - STREAMLIT_SERVER_PORT=8501
       - STREAMLIT_SERVER_ADDRESS=0.0.0.0
     volumes:
       - lighthouse-static:/app/static
+    networks:
+      - traefik
+    labels:
+      - traefik.enable=true
+      - traefik.http.routers.lighthouse.rule=Host(${TRAEFIK_HOST}) && PathPrefix${TRAEFIK_PATHPREFIX})
+      - traefik.http.routers.lighthouse.entrypoints=websecure
+      - traefik.http.routers.lighthouse.tls.certresolver=letsencrypt
+      - traefik.http.routers.lighthouse.priority=10
+      - traefik.http.middlewares.lighthouse-stripprefix.stripprefix.prefixes=/lighthouse
+      - traefik.http.routers.lighthouse.middlewares=lighthouse-stripprefix
+      - traefik.http.services.lighthouse.loadbalancer.server.port=8501
+
 volumes:
   lighthouse-static:
-      external: true
+    external: true
 
-#  db:
-#    image: mysql:8.0
-#    ports:
-#      - "3307:3306"
-#    environment:
-#      MYSQL_ROOT_PASSWORD: lighthousepgpw
-#      MYSQL_DATABASE: lighthouse
-#    volumes:
-#      - mysql_data:/var/lib/mysql
-#
-#volumes:
-#  mysql_data:
+networks:
+  traefik:
+    external: true
