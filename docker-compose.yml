@@ -26,5 +26,5 @@ volumes:
     external: true
 
 networks:
-  ${DEPLOYMENT_NETWORKNAME}:
+ tinyauth_traefikarcanet:
     external: true
