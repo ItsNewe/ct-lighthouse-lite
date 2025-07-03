@@ -10,7 +10,7 @@ services:
     volumes:
       - lighthouse-static:/app/static
     networks:
-      - traefik
+      -  ${DEPLOYMENT_NETWORKNAME}
     labels:
       - traefik.enable=true
       - traefik.http.routers.lighthouse.rule=Host(${TRAEFIK_HOST}) && PathPrefix${TRAEFIK_PATHPREFIX})
