@@ -1,3 +1,5 @@
 [browser]
 gatherUsageStats = false
+
+[server]
 baseUrlPath = "lighthouse"
