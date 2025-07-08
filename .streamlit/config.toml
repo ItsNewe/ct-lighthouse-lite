@@ -1,2 +1,3 @@
 [browser]
 gatherUsageStats = false
+baseUrlPath = "lighthouse"
