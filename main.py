@@ -72,9 +72,7 @@ def processCsv(file):
         'Equity': 'equity',
         'Serial #': 'serial_number'
     }
-
-
-    processed_df.rename(columns=column_mapping, inplace=True)
+    processed_df = processed_df.rename(columns=column_mapping)
 
     # Map French event types to English for consistent filtering
     event_mapping = {
@@ -530,7 +528,7 @@ if not completed_trades.empty:
             hovermode="x unified"
         )
 
-        st.plotly_chart(fig, use_container_width=True)
+        st.plotly_chart(fig, width="stretch")
         
     with tab2:
         st.header("Time-Based Analysis")
@@ -567,7 +565,7 @@ if not completed_trades.empty:
             
             weekday_fig.add_hline(y=0, line_dash="solid", line_color="black", line_width=2, opacity=0.5)
             weekday_fig.update_layout(height=400)
-            st.plotly_chart(weekday_fig, use_container_width=True)
+            st.plotly_chart(weekday_fig, width="stretch")
 
         with st.expander("Detailed Statistics by Weekday"):
                 st.write(weekday_trade_stats)
@@ -590,7 +588,7 @@ if not completed_trades.empty:
             
             total_fig.add_hline(y=0, line_dash="solid", line_color="black", line_width=2, opacity=0.5)
             total_fig.update_layout(height=400)
-            st.plotly_chart(total_fig, use_container_width=True)
+            st.plotly_chart(total_fig, width="stretch")
 
         st.markdown("---")
         st.subheader("Performance by Hour")
@@ -611,7 +609,7 @@ if not completed_trades.empty:
                 labels={"gross_profit": "Profit/Loss (€)", "hour": "Hour of Day", "trade_type": "Position Type"}
         )         
         hour_fig.update_layout(height=400)
-        st.plotly_chart(hour_fig, use_container_width=True)
+        st.plotly_chart(hour_fig, width="stretch")
         with st.expander("Detailed Statistics by Hour"):
             st.write(hourly_trade_stats)
             st.write("Total Trades:", hourly_trade_stats['count'].sum())
@@ -636,7 +634,7 @@ if not completed_trades.empty:
             )
             
             pie_fig.update_layout(height=400)
-            st.plotly_chart(pie_fig, use_container_width=True)
+            st.plotly_chart(pie_fig, width="stretch")
             
         with col2:
             position_stats = completed_trades.groupby('trade_type')['gross_profit'].agg(['sum', 'mean', 'count'])
@@ -650,7 +648,7 @@ if not completed_trades.empty:
             )
             
             position_fig.update_layout(height=400)
-            st.plotly_chart(position_fig, use_container_width=True)
+            st.plotly_chart(position_fig, width="stretch")
 
         # New section for trade pattern analysis
         st.markdown("---")
@@ -710,7 +708,7 @@ if not completed_trades.empty:
         )
         
         duration_profit_fig.add_hline(y=0, line_dash="dash", line_color="black")
-        st.plotly_chart(duration_profit_fig, use_container_width=True)
+        st.plotly_chart(duration_profit_fig, width="stretch")
 
         # Trade volume analysis
         st.subheader("Volume Analysis")
@@ -729,7 +727,7 @@ if not completed_trades.empty:
         )
         
         volume_profit_fig.add_hline(y=0, line_dash="dash", line_color="black")
-        st.plotly_chart(volume_profit_fig, use_container_width=True)
+        st.plotly_chart(volume_profit_fig, width="stretch")
 
         # Add this to tab3 (Position Analysis) after the volume analysis section
 
@@ -868,7 +866,7 @@ if not completed_trades.empty:
                     )
                     
                     time_between_fig.update_layout(height=400)
-                    st.plotly_chart(time_between_fig, use_container_width=True)
+                    st.plotly_chart(time_between_fig, width="stretch")
                 
                 with col2:
                     # Group trailing stop counts by position
@@ -887,7 +885,7 @@ if not completed_trades.empty:
                     )
                     
                     count_fig.update_layout(height=400)
-                    st.plotly_chart(count_fig, use_container_width=True)
+                    st.plotly_chart(count_fig, width="stretch")
             
             # Detailed trailing stop statistics
             with st.expander("Detailed Trailing Stop Statistics"):
@@ -1059,7 +1057,7 @@ if not completed_trades.empty:
             
             streak_fig.add_hline(y=0, line_dash="solid", line_color="black", line_width=1)
             streak_fig.update_layout(height=400)
-            st.plotly_chart(streak_fig, use_container_width=True)
+            st.plotly_chart(streak_fig, width="stretch")
             
         # Calculate profit per minute
         st.subheader("Profit per Minute Analysis")
@@ -1130,7 +1128,7 @@ if not completed_trades.empty:
             
             ppm_fig.add_hline(y=0, line_dash="dash", line_color="black")
             ppm_fig.update_layout(height=500)
-            st.plotly_chart(ppm_fig, use_container_width=True)
+            st.plotly_chart(ppm_fig, width="stretch")
             
         # Day of Month Performance Calendar
         st.subheader("Performance by Day of Month")
@@ -1249,7 +1247,7 @@ if not completed_trades.empty:
                 plot_bgcolor='rgba(240, 240, 240, 0.5)'
             )
             
-            st.plotly_chart(fig, use_container_width=True)
+            st.plotly_chart(fig, width="stretch")
             
             # Show detailed statistics
             with st.expander("Detailed Day of Month Statistics"):
